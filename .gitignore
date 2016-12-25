@@ -96,3 +96,9 @@ x509.genkey
 
 # Kconfig presets
 all.config
+
+#
+# Kernel script generated files
+#
+KERNEL_OUT
+kernel_log.txt
