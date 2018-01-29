@@ -1155,7 +1155,8 @@ static void change_pageblock_range(struct page *pageblock_page,
  * is worse than movable allocations stealing from unmovable and reclaimable
  * pageblocks.
  */
-static bool can_steal_fallback(unsigned int order, int start_mt)
+static bool can_steal_fallback(unsigned int order, int start_mt,
+			int fallback_type, unsigned int start_order)
 {
 	/*
 	 * Leaving this order check is intended, although there is
@@ -1167,10 +1168,15 @@ static bool can_steal_fallback(unsigned int order, int start_mt)
 	if (order >= pageblock_order)
 		return true;
 
-	if (order >= pageblock_order / 2 ||
-		start_mt == MIGRATE_RECLAIMABLE ||
-		start_mt == MIGRATE_UNMOVABLE ||
-		page_group_by_mobility_disabled)
+	/* don't let unmovable allocations cause migrations simply because of free pages */
+	if ((start_mt != MIGRATE_UNMOVABLE && order >= pageblock_order / 2) ||
+	/* only steal reclaimable page blocks for unmovable allocations */
+	(start_mt == MIGRATE_UNMOVABLE && fallback_type != MIGRATE_MOVABLE && order >= pageblock_order / 2) ||
+	/* reclaimable can steal aggressively */
+	start_mt == MIGRATE_RECLAIMABLE ||
+	/* allow unmovable allocs up to 64K without migrating blocks */
+	(start_mt == MIGRATE_UNMOVABLE && start_order >= 5) ||
+	page_group_by_mobility_disabled)
 		return true;
 
 	return false;
@@ -1205,13 +1211,13 @@ static void steal_suitable_fallback(struct zone *zone, struct page *page,
 
 /* Check whether there is a suitable fallback freepage with requested order. */
 static int find_suitable_fallback(struct free_area *area, unsigned int order,
-					int migratetype, bool *can_steal)
+					int migratetype, bool *can_steal, unsigned int start_order)
 {
 	int i;
 	int fallback_mt;
 
 	if (area->nr_free == 0)
-		return -1;
+		return -EPERM;
 
 	*can_steal = false;
 	for (i = 0;; i++) {
@@ -1222,13 +1228,13 @@ static int find_suitable_fallback(struct free_area *area, unsigned int order,
 		if (list_empty(&area->free_list[fallback_mt]))
 			continue;
 
-		if (can_steal_fallback(order, migratetype))
+		if (can_steal_fallback(order, migratetype, fallback_mt, start_order))
 			*can_steal = true;
 
 		return fallback_mt;
 	}
 
-	return -1;
+	return -EPERM;
 }
 
 /* Remove an element from the buddy allocator from the fallback list */
@@ -1247,7 +1253,7 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 				--current_order) {
 		area = &(zone->free_area[current_order]);
 		fallback_mt = find_suitable_fallback(area, current_order,
-				start_migratetype, &can_steal);
+				start_migratetype, &can_steal, order);
 		if (fallback_mt == -1)
 			continue;
 
@@ -1259,8 +1265,8 @@ __rmqueue_fallback(struct zone *zone, unsigned int order, int start_migratetype)
 		/* Remove the page from the freelists */
 		area->nr_free--;
 
-                if (is_migrate_cma(fallback_mt))
-                        area->nr_free_cma--;
+				if (is_migrate_cma(fallback_mt))
+						area->nr_free_cma--;
 		list_del(&page->lru);
 		rmv_page_order(page);
 
