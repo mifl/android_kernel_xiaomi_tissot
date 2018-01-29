@@ -176,7 +176,8 @@ static void __init dm_substitute_devices(char *str, size_t str_len)
 			continue;
 
 		/* Temporarily terminate with a nul */
-		candidate_end--;
+		if (*candidate_end)
+			candidate_end--;
 		old_char = *candidate_end;
 		*candidate_end = '\0';
 
@@ -363,7 +364,7 @@ static void __init dm_setup_drive(void)
 	} else if (dm_get_md_type(md) != dm_table_get_type(table)) {
 		DMWARN("can't change device type after initial table load.");
 		goto setup_md_queue_fail;
-        }
+		 }
 
 	/* Suspend the device so that we can bind it to the table. */
 	if (dm_suspend(md, 0)) {
